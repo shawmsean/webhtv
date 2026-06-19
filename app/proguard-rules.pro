@@ -5,6 +5,8 @@
 
 # Gson
 -keep class com.google.gson.** { *; }
+-keep class com.fongmi.android.tv.remote.** { *; }
+-keep class com.fongmi.android.tv.gitcloud.** { *; }
 
 # SimpleXML
 -keep interface org.simpleframework.xml.core.Label { public *; }
@@ -24,6 +26,10 @@
 -dontwarn okhttp3.**
 -keep class okio.** { *; }
 -keep class okhttp3.** { *; }
+
+# JGit
+-dontwarn java.lang.ProcessHandle
+-dontwarn java.lang.management.ManagementFactory
 
 # CatVod
 -keep class com.github.catvod.Proxy { *; }

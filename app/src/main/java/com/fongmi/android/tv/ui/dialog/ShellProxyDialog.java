@@ -33,6 +33,7 @@ import com.fongmi.android.tv.databinding.DialogShellProxyBinding;
 import com.fongmi.android.tv.setting.ProxySetting;
 import com.fongmi.android.tv.setting.Setting;
 import com.fongmi.android.tv.ui.custom.CustomTextListener;
+import com.fongmi.android.tv.ui.custom.SettingClipboardOverlay;
 import com.fongmi.android.tv.utils.Notify;
 import com.fongmi.android.tv.utils.ResUtil;
 import com.fongmi.android.tv.utils.Task;
@@ -65,8 +66,12 @@ public class ShellProxyDialog extends BaseAlertDialog {
     private boolean syncing;
     private boolean proxyEnabled;
     private boolean textMode = true;
+    private boolean recognizeMode;
+    private boolean reverseOrder;
+    private boolean beforeRecognizeTextMode = true;
     private boolean saved;
     private boolean testing;
+    private SettingClipboardOverlay clipboardOverlay;
 
     public static void show(Fragment fragment) {
         show(fragment, null);
@@ -123,6 +128,7 @@ public class ShellProxyDialog extends BaseAlertDialog {
         binding.contentScroll.setLayoutParams(scrollParams);
         binding.contentScroll.setMaxHeight(land ? 0 : (int) (screenHeight * 0.52f));
         binding.proxyEnabled.requestFocus();
+        if (clipboardOverlay == null) clipboardOverlay = SettingClipboardOverlay.attach(this, binding.getRoot());
     }
 
     @Override
@@ -130,6 +136,7 @@ public class ShellProxyDialog extends BaseAlertDialog {
         adapter = new RuleAdapter();
         proxyEnabled = Setting.isShellProxy();
         updateProxyEnabledText();
+        updateReverseText();
         binding.defaultUrl.setText(Setting.getShellProxyUrl());
         if (TextUtils.isEmpty(binding.defaultUrl.getText())) binding.defaultUrl.setText("socks5://");
         binding.defaultUrl.setSelection(binding.defaultUrl.length());
@@ -137,6 +144,7 @@ public class ShellProxyDialog extends BaseAlertDialog {
         binding.rules.setSelection(binding.rules.length());
         setupEditableText(binding.defaultUrl, false);
         setupEditableText(binding.rules, true);
+        setupEditableText(binding.recognizeInput, true);
         binding.ruleRecycler.setLayoutManager(new LinearLayoutManager(requireContext()));
         binding.ruleRecycler.setItemAnimator(null);
         binding.ruleRecycler.setAdapter(adapter);
@@ -152,6 +160,11 @@ public class ShellProxyDialog extends BaseAlertDialog {
             proxyEnabled = !proxyEnabled;
             updateProxyEnabledText();
         });
+        binding.reverse.setOnClickListener(view -> {
+            reverseOrder = !reverseOrder;
+            updateReverseText();
+            adapter.setReverseOrder(reverseOrder);
+        });
         binding.defaultUrl.setOnEditorActionListener((textView, actionId, event) -> false);
         binding.defaultUrl.setOnFocusChangeListener((view, hasFocus) -> {
             if (hasFocus && TextUtils.isEmpty(binding.defaultUrl.getText())) {
@@ -160,6 +173,10 @@ public class ShellProxyDialog extends BaseAlertDialog {
             }
         });
         binding.rules.setOnEditorActionListener((textView, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_DONE) onPositive();
+            return true;
+        });
+        binding.recognizeInput.setOnEditorActionListener((textView, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_DONE) onPositive();
             return true;
         });
@@ -174,14 +191,18 @@ public class ShellProxyDialog extends BaseAlertDialog {
             if (checkedId == R.id.textMode) showTextMode(true);
             if (checkedId == R.id.uiMode) showTextMode(false);
         });
-        binding.negative.setOnClickListener(view -> dismiss());
+        binding.negative.setOnClickListener(view -> {
+            if (recognizeMode) showRecognizeMode(false);
+            else dismiss();
+        });
         binding.positive.setOnClickListener(view -> onPositive());
         binding.addRule.setOnClickListener(view -> {
-            adapter.add(new Rule("", ""));
+            int position = adapter.add(new Rule("", ""));
             syncTextFromRules();
-            binding.ruleRecycler.scrollToPosition(adapter.getItemCount() - 1);
+            scrollToRule(position);
         });
         binding.suggestRule.setOnClickListener(view -> showSuggestSiteDialog());
+        binding.recognizeRule.setOnClickListener(view -> showRecognizeMode(true));
         binding.testRule.setOnClickListener(view -> testProxy());
     }
 
@@ -193,6 +214,8 @@ public class ShellProxyDialog extends BaseAlertDialog {
 
     @Override
     public void onDismiss(@NonNull DialogInterface dialog) {
+        if (clipboardOverlay != null) clipboardOverlay.detach();
+        clipboardOverlay = null;
         save(false);
         super.onDismiss(dialog);
     }
@@ -240,15 +263,46 @@ public class ShellProxyDialog extends BaseAlertDialog {
     }
 
     private void showTextMode(boolean text) {
+        if (recognizeMode) return;
         textMode = text;
         if (textMode) syncTextFromRules();
         else {
             updateRulesFromText();
             if (adapter.getItemCount() == 0) adapter.add(new Rule("", ""));
         }
+        updateModeVisibility();
+    }
+
+    private void showRecognizeMode(boolean show) {
+        if (show) {
+            syncTextFromRulesIfNeeded();
+            beforeRecognizeTextMode = textMode;
+            recognizeMode = true;
+            binding.recognizeInput.setText("");
+            binding.negative.setText(R.string.playback_webhook_back);
+            binding.positive.setText(R.string.dialog_positive);
+            updateModeVisibility();
+            binding.contentScroll.scrollTo(0, 0);
+            binding.recognizeInput.requestFocus();
+            return;
+        }
+        recognizeMode = false;
+        binding.negative.setText(R.string.dialog_negative);
+        binding.positive.setText(R.string.dialog_positive);
+        showTextMode(beforeRecognizeTextMode);
+    }
+
+    private void updateModeVisibility() {
         binding.rulesLayout.setVisibility(textMode ? View.VISIBLE : View.GONE);
         binding.ruleEditor.setVisibility(textMode ? View.GONE : View.VISIBLE);
-        binding.addRule.setVisibility(textMode ? View.GONE : View.VISIBLE);
+        binding.recognizeLayout.setVisibility(recognizeMode ? View.VISIBLE : View.GONE);
+        binding.rulesLayout.setVisibility(!recognizeMode && textMode ? View.VISIBLE : View.GONE);
+        binding.ruleEditor.setVisibility(!recognizeMode && !textMode ? View.VISIBLE : View.GONE);
+        binding.modeGroup.setVisibility(recognizeMode ? View.GONE : View.VISIBLE);
+        binding.addRule.setVisibility(recognizeMode || textMode ? View.GONE : View.VISIBLE);
+        binding.suggestRule.setVisibility(recognizeMode ? View.GONE : View.VISIBLE);
+        binding.recognizeRule.setVisibility(recognizeMode ? View.GONE : View.VISIBLE);
+        binding.testRule.setVisibility(recognizeMode ? View.GONE : View.VISIBLE);
         binding.modePanel.requestLayout();
         binding.modePanel.invalidate();
     }
@@ -256,6 +310,10 @@ public class ShellProxyDialog extends BaseAlertDialog {
     private void updateProxyEnabledText() {
         binding.proxyEnabled.setText(proxyEnabled ? R.string.setting_enable : R.string.setting_disable);
         binding.proxyEnabled.setAlpha(proxyEnabled ? 1.0f : 0.65f);
+    }
+
+    private void updateReverseText() {
+        binding.reverse.setText(reverseOrder ? R.string.setting_order_normal : R.string.setting_order_reverse);
     }
 
     private void updateRulesFromText() {
@@ -341,11 +399,67 @@ public class ShellProxyDialog extends BaseAlertDialog {
             hosts.add(key);
             added++;
         }
+        int firstAdded = adapter.getItemCount();
         adapter.setItems(items);
         proxyEnabled = true;
         updateProxyEnabledText();
         syncTextFromRules();
+        if (added > 0) scrollToRule(adapter.displayPosition(reverseOrder ? items.size() - 1 : firstAdded));
         Notify.show(ResUtil.getString(R.string.setting_proxy_suggest_added, added, hosts.size()));
+    }
+
+    private boolean saveRecognizedRules() {
+        String text = binding.recognizeInput.getText() == null ? "" : binding.recognizeInput.getText().toString();
+        if (TextUtils.isEmpty(text.trim())) {
+            Notify.show(R.string.setting_proxy_recognize_empty);
+            return false;
+        }
+        List<Rule> items = Rule.parseDetected(text);
+        if (items.isEmpty()) {
+            Notify.show(R.string.setting_proxy_recognize_failed);
+            return false;
+        }
+        int firstAdded = adapter.getItemCount();
+        List<Rule> next = mergeRules(adapter.getItems(), items);
+        adapter.setItems(next);
+        proxyEnabled = true;
+        updateProxyEnabledText();
+        syncTextFromRules();
+        showRecognizeMode(false);
+        if (next.size() > firstAdded) scrollToRule(adapter.displayPosition(reverseOrder ? next.size() - 1 : firstAdded));
+        Notify.show(ResUtil.getString(R.string.setting_proxy_recognize_done, items.size()));
+        return true;
+    }
+
+    private void scrollToRule(int position) {
+        if (position < 0) return;
+        binding.ruleRecycler.post(() -> {
+            binding.ruleRecycler.scrollToPosition(position);
+            binding.ruleRecycler.post(() -> {
+                RecyclerView.ViewHolder holder = binding.ruleRecycler.findViewHolderForAdapterPosition(position);
+                if (holder != null) holder.itemView.requestFocus();
+            });
+        });
+    }
+
+    private List<Rule> mergeRules(List<Rule> current, List<Rule> incoming) {
+        List<Rule> result = new ArrayList<>();
+        Set<String> exists = new LinkedHashSet<>();
+        for (Rule item : current) addRuleIfAbsent(result, exists, item);
+        for (Rule item : incoming) addRuleIfAbsent(result, exists, item);
+        if (result.isEmpty()) result.add(new Rule("", ""));
+        return result;
+    }
+
+    private void addRuleIfAbsent(List<Rule> result, Set<String> exists, Rule item) {
+        if (item == null) return;
+        String hosts = item.hosts == null ? "" : item.hosts.trim();
+        String url = item.url == null ? "" : item.url.trim();
+        if (hosts.isEmpty() && url.isEmpty()) return;
+        String key = hosts.toLowerCase(Locale.ROOT) + "=>" + url;
+        if (exists.contains(key)) return;
+        result.add(new Rule(hosts, url));
+        exists.add(key);
     }
 
     private Set<String> getHosts(List<Rule> items) {
@@ -433,6 +547,10 @@ public class ShellProxyDialog extends BaseAlertDialog {
     }
 
     private void onPositive() {
+        if (recognizeMode) {
+            saveRecognizedRules();
+            return;
+        }
         if (save(true)) dismiss();
     }
 
@@ -467,7 +585,8 @@ public class ShellProxyDialog extends BaseAlertDialog {
         }
 
         static List<Rule> parse(String text) {
-            if (Json.isObj(text) || Json.isArray(text)) return parseJson(text);
+            List<Rule> detected = parseDetected(text);
+            if (!detected.isEmpty()) return detected;
             List<Rule> items = new ArrayList<>();
             for (String raw : text.split("\\r?\\n")) {
                 String line = raw.trim();
@@ -478,11 +597,37 @@ public class ShellProxyDialog extends BaseAlertDialog {
             return items;
         }
 
+        static List<Rule> parseDetected(String text) {
+            String raw = text == null ? "" : text.trim();
+            if (TextUtils.isEmpty(raw)) return Collections.emptyList();
+            List<Rule> items = parseJson(raw);
+            if (!items.isEmpty()) return items;
+            String proxyArray = extractNamedArray(raw, "proxy");
+            if (!TextUtils.isEmpty(proxyArray)) {
+                items = parseJson("{\"proxy\":" + proxyArray + "}");
+                if (!items.isEmpty()) return items;
+            }
+            String array = extractFirstArray(raw);
+            if (!TextUtils.isEmpty(array) && (array.contains("\"hosts\"") || array.contains("\"urls\""))) {
+                items = parseJson(array);
+                if (!items.isEmpty()) return items;
+            }
+            String objects = extractObjects(raw);
+            return TextUtils.isEmpty(objects) ? Collections.emptyList() : parseJson("[" + objects + "]");
+        }
+
         static List<Rule> parseJson(String text) {
             List<Rule> items = new ArrayList<>();
             try {
-                JsonElement element = Json.parse(text);
-                JsonArray array = element.isJsonObject() && element.getAsJsonObject().has("proxy") ? element.getAsJsonObject().getAsJsonArray("proxy") : element.getAsJsonArray();
+                JsonElement element = Json.parse(trimTrailingComma(text));
+                JsonArray array = new JsonArray();
+                if (element.isJsonObject() && element.getAsJsonObject().has("proxy") && element.getAsJsonObject().get("proxy").isJsonArray()) {
+                    array = element.getAsJsonObject().getAsJsonArray("proxy");
+                } else if (element.isJsonObject()) {
+                    array.add(element);
+                } else if (element.isJsonArray()) {
+                    array = element.getAsJsonArray();
+                }
                 for (JsonElement item : array) {
                     if (!item.isJsonObject()) continue;
                     JsonObject object = item.getAsJsonObject();
@@ -495,8 +640,84 @@ public class ShellProxyDialog extends BaseAlertDialog {
             return items;
         }
 
+        static String trimTrailingComma(String text) {
+            String value = text == null ? "" : text.trim();
+            while (value.endsWith(",")) value = value.substring(0, value.length() - 1).trim();
+            return value;
+        }
+
+        static String extractNamedArray(String text, String key) {
+            String marker = "\"" + key + "\"";
+            int search = 0;
+            while (search >= 0 && search < text.length()) {
+                int index = text.indexOf(marker, search);
+                if (index < 0) return "";
+                int colon = text.indexOf(':', index + marker.length());
+                if (colon < 0) return "";
+                int start = nextNonSpace(text, colon + 1);
+                if (start >= 0 && start < text.length() && text.charAt(start) == '[') {
+                    int end = findClosing(text, start, '[', ']');
+                    return end > start ? text.substring(start, end + 1) : "";
+                }
+                search = colon + 1;
+            }
+            return "";
+        }
+
+        static String extractFirstArray(String text) {
+            int start = text.indexOf('[');
+            while (start >= 0) {
+                int end = findClosing(text, start, '[', ']');
+                if (end > start) return text.substring(start, end + 1);
+                start = text.indexOf('[', start + 1);
+            }
+            return "";
+        }
+
+        static String extractObjects(String text) {
+            List<String> objects = new ArrayList<>();
+            int start = text.indexOf('{');
+            while (start >= 0) {
+                int end = findClosing(text, start, '{', '}');
+                if (end <= start) break;
+                String object = text.substring(start, end + 1);
+                if (object.contains("\"hosts\"") || object.contains("\"urls\"")) objects.add(object);
+                start = text.indexOf('{', end + 1);
+            }
+            return TextUtils.join(",", objects);
+        }
+
+        static int nextNonSpace(String text, int start) {
+            for (int i = start; i < text.length(); i++) if (!Character.isWhitespace(text.charAt(i))) return i;
+            return -1;
+        }
+
+        static int findClosing(String text, int start, char open, char close) {
+            boolean inString = false;
+            boolean escaped = false;
+            int depth = 0;
+            for (int i = start; i < text.length(); i++) {
+                char c = text.charAt(i);
+                if (inString) {
+                    if (escaped) escaped = false;
+                    else if (c == '\\') escaped = true;
+                    else if (c == '"') inString = false;
+                    continue;
+                }
+                if (c == '"') {
+                    inString = true;
+                    continue;
+                }
+                if (c == open) depth++;
+                else if (c == close && --depth == 0) return i;
+            }
+            return -1;
+        }
+
         static String join(JsonObject object, String key) {
-            if (!object.has(key) || !object.get(key).isJsonArray()) return "";
+            if (!object.has(key)) return "";
+            if (object.get(key).isJsonPrimitive()) return object.get(key).getAsString();
+            if (!object.get(key).isJsonArray()) return "";
             List<String> result = new ArrayList<>();
             for (JsonElement element : object.getAsJsonArray(key)) if (element.isJsonPrimitive()) result.add(element.getAsString());
             return TextUtils.join(",", result);
@@ -539,6 +760,7 @@ public class ShellProxyDialog extends BaseAlertDialog {
 
         private final List<Rule> items = new ArrayList<>();
         private DragListener dragListener;
+        private boolean reverseOrder;
 
         void setItems(List<Rule> items) {
             this.items.clear();
@@ -550,21 +772,41 @@ public class ShellProxyDialog extends BaseAlertDialog {
             return items;
         }
 
-        void add(Rule item) {
+        int add(Rule item) {
             items.add(item);
-            notifyItemInserted(items.size() - 1);
+            int position = displayPosition(items.size() - 1);
+            notifyItemInserted(position);
+            return position;
         }
 
-        void move(int from, int to) {
-            if (from < 0 || to < 0 || from >= items.size() || to >= items.size()) return;
+        void move(int fromPosition, int toPosition) {
+            if (fromPosition < 0 || toPosition < 0 || fromPosition >= items.size() || toPosition >= items.size()) return;
+            int from = itemIndex(fromPosition);
+            int to = itemIndex(toPosition);
             Collections.swap(items, from, to);
-            notifyItemMoved(from, to);
+            notifyItemMoved(fromPosition, toPosition);
+            notifyItemRangeChanged(Math.min(fromPosition, toPosition), Math.abs(fromPosition - toPosition) + 1);
         }
 
         void remove(int position) {
             if (position < 0 || position >= items.size()) return;
-            items.remove(position);
-            notifyItemRemoved(position);
+            items.remove(itemIndex(position));
+            notifyDataSetChanged();
+        }
+
+        void setReverseOrder(boolean reverseOrder) {
+            if (this.reverseOrder == reverseOrder) return;
+            this.reverseOrder = reverseOrder;
+            notifyDataSetChanged();
+        }
+
+        int itemIndex(int position) {
+            return reverseOrder ? items.size() - 1 - position : position;
+        }
+
+        int displayPosition(int index) {
+            if (index < 0 || index >= items.size()) return -1;
+            return reverseOrder ? items.size() - 1 - index : index;
         }
 
         void setDragListener(DragListener dragListener) {
@@ -584,7 +826,9 @@ public class ShellProxyDialog extends BaseAlertDialog {
 
         @Override
         public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
-            Rule item = items.get(position);
+            int index = itemIndex(position);
+            Rule item = items.get(index);
+            holder.binding.number.setText(String.valueOf(index + 1));
             holder.binding.hosts.setText(item.hosts);
             holder.binding.url.setText(item.url);
             holder.binding.delete.setOnClickListener(view -> {
@@ -626,7 +870,7 @@ public class ShellProxyDialog extends BaseAlertDialog {
         public void afterTextChanged(Editable editable) {
             int position = holder.getBindingAdapterPosition();
             if (position < 0 || position >= adapter.getItems().size()) return;
-            Rule item = adapter.getItems().get(position);
+            Rule item = adapter.getItems().get(adapter.itemIndex(position));
             if (hosts) item.hosts = editable.toString();
             else item.url = editable.toString();
         }

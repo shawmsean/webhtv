@@ -172,12 +172,28 @@ public class Setting {
         Prefers.put("web_home_extension", extension);
     }
 
+    public static boolean isWebHomeFullscreen() {
+        return Prefers.getBoolean("web_home_fullscreen", true);
+    }
+
+    public static void putWebHomeFullscreen(boolean fullscreen) {
+        Prefers.put("web_home_fullscreen", fullscreen);
+    }
+
     public static boolean isPlaybackArtworkWall() {
         return Prefers.getBoolean("playback_artwork_wall", true);
     }
 
     public static void putPlaybackArtworkWall(boolean artworkWall) {
         Prefers.put("playback_artwork_wall", artworkWall);
+    }
+
+    public static boolean isCspWarmup() {
+        return Prefers.getBoolean("csp_warmup");
+    }
+
+    public static void putCspWarmup(boolean warmup) {
+        Prefers.put("csp_warmup", warmup);
     }
 
     public static boolean isDebugLog() {

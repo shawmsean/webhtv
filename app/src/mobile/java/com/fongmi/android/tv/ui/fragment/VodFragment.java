@@ -2,6 +2,7 @@ package com.fongmi.android.tv.ui.fragment;
 
 import android.text.TextUtils;
 import android.view.LayoutInflater;
+import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
@@ -17,6 +18,7 @@ import androidx.viewpager.widget.PagerAdapter;
 import androidx.viewpager.widget.ViewPager;
 
 import com.fongmi.android.tv.R;
+import com.fongmi.android.tv.api.CspWarmup;
 import com.fongmi.android.tv.api.config.VodConfig;
 import com.fongmi.android.tv.bean.Class;
 import com.fongmi.android.tv.bean.Config;
@@ -33,6 +35,7 @@ import com.fongmi.android.tv.impl.ConfigListener;
 import com.fongmi.android.tv.impl.FilterListener;
 import com.fongmi.android.tv.impl.SiteListener;
 import com.fongmi.android.tv.model.SiteViewModel;
+import com.fongmi.android.tv.setting.Setting;
 import com.fongmi.android.tv.ui.activity.HomeActivity;
 import com.fongmi.android.tv.ui.activity.HistoryActivity;
 import com.fongmi.android.tv.ui.activity.KeepActivity;
@@ -104,6 +107,7 @@ public class VodFragment extends BaseFragment implements ConfigListener, SiteLis
         showProgress();
         setTitle();
         setLogo();
+        updateToolbarMenu();
     }
 
     @Override
@@ -155,6 +159,7 @@ public class VodFragment extends BaseFragment implements ConfigListener, SiteLis
         mAdapter.addAll(mResult = result);
         notifyPagerAdapter();
         setFabVisible(0);
+        updateToolbarMenu();
         hideProgress();
         showContent();
     }
@@ -244,7 +249,24 @@ public class VodFragment extends BaseFragment implements ConfigListener, SiteLis
         else if (item.getItemId() == R.id.search) SearchActivity.start(requireActivity());
         else if (item.getItemId() == R.id.history) HistoryActivity.start(requireActivity());
         else if (item.getItemId() == R.id.sync) OneKeySyncDialog.create().show(requireActivity());
+        else if (item.getItemId() == R.id.enhance && homeActivity() != null) homeActivity().openEnhanceFromVod();
+        else if (item.getItemId() == R.id.web_home_fullscreen) onWebHomeFullscreen();
+        else return false;
         return true;
+    }
+
+    private void onWebHomeFullscreen() {
+        if (!Setting.isWebHomeFullscreen()) return;
+        if (mWeb == null || !mWeb.isVisible()) return;
+        JsonObject payload = new JsonObject();
+        payload.addProperty("mode", WebHomeChrome.EDGE);
+        setChrome(payload);
+    }
+
+    private void updateToolbarMenu() {
+        Menu menu = mBinding.toolbar.getMenu();
+        MenuItem fullscreen = menu.findItem(R.id.web_home_fullscreen);
+        if (fullscreen != null) fullscreen.setVisible(Setting.isWebHomeFullscreen() && mWeb != null && mWeb.isVisible());
     }
 
     private void setSearchLongClick() {
@@ -278,6 +300,7 @@ public class VodFragment extends BaseFragment implements ConfigListener, SiteLis
         requestNormalChrome();
         showProgress();
         mBinding.homeWeb.setVisibility(View.GONE);
+        updateToolbarMenu();
         clearPagerTypes();
         mBinding.pager.setAdapter(new PageAdapter(getChildFragmentManager()));
         setFabVisible(0);
@@ -288,6 +311,7 @@ public class VodFragment extends BaseFragment implements ConfigListener, SiteLis
         Site home = getHome();
         WebHomeChromeStartup.remember(getConfig(), home);
         setTitle();
+        if (home.hasHomePage()) CspWarmup.schedule("mobile-interface");
         if (mWeb != null && mWeb.load(home)) {
             clearPagerTypes();
             hideProgress();
@@ -454,6 +478,10 @@ public class VodFragment extends BaseFragment implements ConfigListener, SiteLis
 
     @Override
     public void setToolbar(boolean visible) {
+        if (!Setting.isWebHomeFullscreen()) {
+            applyWebHomeChrome(WebHomeChrome.NORMAL);
+            return;
+        }
         HomeActivity activity = homeActivity();
         if (activity != null) activity.setWebHomeLegacyToolbar(visible);
         else applyWebHomeChrome(visible ? WebHomeChrome.NORMAL : WebHomeChrome.IMMERSIVE);
@@ -461,18 +489,30 @@ public class VodFragment extends BaseFragment implements ConfigListener, SiteLis
 
     @Override
     public void applyDefaultChrome(Site site) {
+        if (!Setting.isWebHomeFullscreen()) {
+            applyWebHomeChrome(WebHomeChrome.NORMAL);
+            return;
+        }
         HomeActivity activity = homeActivity();
         if (activity != null) activity.applyWebHomeDefaultChrome(site);
     }
 
     @Override
     public void setChrome(JsonObject payload) {
+        if (!Setting.isWebHomeFullscreen()) {
+            applyWebHomeChrome(WebHomeChrome.NORMAL);
+            return;
+        }
         HomeActivity activity = homeActivity();
         if (activity != null) activity.setWebHomeChrome(payload);
     }
 
     @Override
     public void restoreChrome() {
+        if (!Setting.isWebHomeFullscreen()) {
+            applyWebHomeChrome(WebHomeChrome.NORMAL);
+            return;
+        }
         HomeActivity activity = homeActivity();
         if (activity != null) activity.restoreWebHomeChrome();
     }
@@ -504,6 +544,7 @@ public class VodFragment extends BaseFragment implements ConfigListener, SiteLis
         mBinding.filter.setVisibility(View.GONE);
         mBinding.link.setVisibility(View.GONE);
         mBinding.top.setVisibility(View.GONE);
+        updateToolbarMenu();
     }
 
     private void showNativeContent() {
@@ -511,6 +552,7 @@ public class VodFragment extends BaseFragment implements ConfigListener, SiteLis
         mBinding.type.setVisibility(View.VISIBLE);
         mBinding.pager.setVisibility(View.VISIBLE);
         mBinding.homeWeb.setVisibility(View.GONE);
+        updateToolbarMenu();
     }
 
     public void applyWebHomeChrome(String mode) {
@@ -519,6 +561,7 @@ public class VodFragment extends BaseFragment implements ConfigListener, SiteLis
         mBinding.appBar.setExpanded(true, false);
         mBinding.appBar.setVisibility(hidden ? View.GONE : View.VISIBLE);
         setHomeWebTopMargin(hidden ? 0 : mHomeWebTopMargin);
+        updateToolbarMenu();
         if (hidden) {
             mBinding.type.setVisibility(View.GONE);
             mBinding.pager.setVisibility(View.GONE);
